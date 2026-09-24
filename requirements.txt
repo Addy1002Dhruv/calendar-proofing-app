@@ -4,3 +4,4 @@ fpdf
 google-genai
 pillow
 holidays
+gdown
