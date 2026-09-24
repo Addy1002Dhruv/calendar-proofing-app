@@ -1,15 +1,20 @@
 import calendar
 import datetime
 import io
+import re
 import time
-from PIL import Image
 import fitz  # PyMuPDF
-import streamlit as st
-from google import genai
 from fpdf import FPDF
+from google import genai
+import gdown
+from PIL import Image
+import streamlit as st
 
-# Active Gemini API Key
-API_KEY = "AQ.Ab8RN6LEK3tLGxCapMfvEyuy2ke7tcTU7WypnSJM160F-xtzzw"
+# Secure API Key Retrieval
+if "GEMINI_API_KEY" in st.secrets:
+    API_KEY = st.secrets["GEMINI_API_KEY"]
+else:
+    API_KEY = "YOUR_FALLBACK_KEY_HERE"
 
 st.set_page_config(
     page_title="Smart Printers - Calendar Proofing QA",
@@ -69,7 +74,9 @@ def get_holiday_reference(year, region):
                     for d, n in holidays.TZ(years=year).items()
                 }
             )
-        return "\n".join([f"- {d}: {n}" for d, n in sorted(holiday_dict.items())])
+        return "\n".join(
+            [f"- {d}: {n}" for d, n in sorted(holiday_dict.items())]
+        )
     except ImportError:
         return f"Standard major holidays enabled for {region} ({year})."
 
@@ -81,7 +88,7 @@ def prepare_high_res_image(image, max_dim=3200):
     if img.mode != "RGB":
         img = img.convert("RGB")
     buffer = io.BytesIO()
-    img.save(buffer, format="JPEG", quality=93)
+    img.save(buffer, format="JPEG", quality=92)
     buffer.seek(0)
     return Image.open(buffer)
 
@@ -101,9 +108,7 @@ class CalendarQA_PDF(FPDF):
 def create_styled_calendar_pdf(overall_passed, page_results, year, region):
     pdf = CalendarQA_PDF()
     pdf.add_page()
-    pdf.set_fill_color(
-        (34, 139, 34) if overall_passed else (220, 20, 60)
-    )
+    pdf.set_fill_color((34, 139, 34) if overall_passed else (220, 20, 60))
     pdf.set_text_color(255, 255, 255)
     pdf.set_font("Arial", "B", 13)
     pdf.cell(
@@ -140,7 +145,11 @@ def create_styled_calendar_pdf(overall_passed, page_results, year, region):
 
 
 def run_calendar_inspection(client, prompt, page_img):
-    candidate_models = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash"]
+    candidate_models = [
+        "gemini-2.5-flash",
+        "gemini-1.5-flash",
+        "gemini-2.0-flash",
+    ]
     last_exception = None
 
     for model_name in candidate_models:
@@ -156,6 +165,7 @@ def run_calendar_inspection(client, prompt, page_img):
     raise last_exception if last_exception else Exception("API Call Failed")
 
 
+# Configuration Controls
 col1, col2 = st.columns(2)
 with col1:
     target_year = st.selectbox(
@@ -176,26 +186,43 @@ with col2:
         index=1,
     )
 
-st.subheader("1. Upload Calendar Proof Document (PDF)")
-pdf_file = st.file_uploader("Upload calendar PDF", type=["pdf"])
+st.subheader("1. Load Calendar Proof Document")
+upload_type = st.radio(
+    "Choose Input Method:",
+    ("🔗 Google Drive Link (Best for Heavy 2GB PDFs)", "📁 Direct PDF File Upload (Up to 2GB)"),
+)
 
-ref_images = []
-if pdf_file:
-    try:
-        doc = fitz.open(stream=pdf_file.read(), filetype="pdf")
-        st.success(f"PDF loaded ({len(doc)} pages detected)")
-        for page_num in range(len(doc)):
-            page = doc.load_page(page_num)
-            pix = page.get_pixmap(dpi=150)
-            img = Image.open(io.BytesIO(pix.tobytes("png")))
-            ref_images.append(img)
-    except Exception as pdf_err:
-        st.error(f"Failed to read PDF file: {str(pdf_err)}")
+doc = None
 
+if "Google Drive Link" in upload_type:
+    gdrive_url = st.text_input(
+        "Paste Shareable Google Drive PDF Link:",
+        placeholder="https://drive.google.com/file/d/1A2B3C4D5E.../view?usp=sharing",
+    )
+    if gdrive_url:
+        with st.spinner("Fetching PDF from Google Drive..."):
+            try:
+                output_file = "temp_calendar.pdf"
+                gdown.download(url=gdrive_url, output=output_file, quiet=False, fuzzy=True)
+                doc = fitz.open(output_file)
+                st.success(f"Google Drive PDF Loaded Successfully! ({len(doc)} pages detected)")
+            except Exception as e:
+                st.error(f"Could not load Google Drive file. Ensure link access is set to 'Anyone with the link'. Error: {str(e)}")
+
+else:
+    pdf_file = st.file_uploader("Upload Calendar PDF (Up to 2GB)", type=["pdf"])
+    if pdf_file:
+        try:
+            doc = fitz.open(stream=pdf_file.read(), filetype="pdf")
+            st.success(f"PDF uploaded ({len(doc)} pages detected)")
+        except Exception as pdf_err:
+            st.error(f"Failed to read PDF file: {str(pdf_err)}")
+
+# Execution Block
 st.subheader("2. Run Automated Calendar Verification")
 if st.button("🚀 Execute Full Calendar Audit", type="primary"):
-    if not ref_images:
-        st.error("Please upload a valid calendar PDF file first.")
+    if not doc:
+        st.error("Please upload a PDF file or provide a valid Google Drive link first.")
     else:
         try:
             client = genai.Client(api_key=API_KEY)
@@ -206,9 +233,15 @@ if st.button("🚀 Execute Full Calendar Audit", type="primary"):
             page_results = []
             progress_bar = st.progress(0)
 
-            for idx, page_img_raw in enumerate(ref_images):
-                page_num = idx + 1
-                high_res_img = prepare_high_res_image(page_img_raw)
+            for page_num_idx in range(len(doc)):
+                page_num = page_num_idx + 1
+                page = doc.load_page(page_num_idx)
+                
+                # Render at 150 DPI for optimal speed and vision clarity
+                pix = page.get_pixmap(dpi=150)
+                img = Image.open(io.BytesIO(pix.tobytes("png")))
+                high_res_img = prepare_high_res_image(img)
+
                 prompt = f"""
                 You are a senior print QA auditor. Examine this calendar page for {target_year}.
                 {cal_meta}
@@ -238,9 +271,7 @@ if st.button("🚀 Execute Full Calendar Audit", type="primary"):
                     )
                 except Exception as audit_err:
                     overall_passed = False
-                    st.error(
-                        f"API Call Failed on Page {page_num}: {str(audit_err)}"
-                    )
+                    st.error(f"API Error on Page {page_num}: {str(audit_err)}")
                     page_results.append(
                         {
                             "page_num": page_num,
@@ -249,7 +280,7 @@ if st.button("🚀 Execute Full Calendar Audit", type="primary"):
                         }
                     )
 
-                progress_bar.progress((idx + 1) / len(ref_images))
+                progress_bar.progress((page_num_idx + 1) / len(doc))
 
             st.markdown("---")
             if overall_passed:
