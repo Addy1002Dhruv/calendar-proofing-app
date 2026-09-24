@@ -151,8 +151,8 @@ def create_styled_calendar_pdf(overall_passed, page_results, year, region):
 def run_calendar_inspection(client, prompt, page_img):
     candidate_models = [
         "gemini-2.5-flash",
+        "gemini-3.5-flash",
         "gemini-2.5-pro",
-        "gemini-1.5-flash",
     ]
     last_exception = None
 
