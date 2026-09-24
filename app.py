@@ -149,10 +149,11 @@ def create_styled_calendar_pdf(overall_passed, page_results, year, region):
 
 
 def run_calendar_inspection(client, prompt, page_img):
+    # Updated to the latest active models requested by Google API
     candidate_models = [
-        "gemini-2.5-flash",
+        "gemini-3.1-pro-preview",
         "gemini-3.5-flash",
-        "gemini-2.5-pro",
+        "gemini-3.6-flash",
     ]
     last_exception = None
 
