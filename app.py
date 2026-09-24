@@ -10,15 +10,21 @@ import gdown
 from PIL import Image
 import streamlit as st
 
-# Secure API Key Retrieval
-if "GEMINI_API_KEY" in st.secrets:
-    API_KEY = st.secrets["AQ.Ab8RN6LTU7rk71oDl6nMy2roUP2etNEPysQOug4ifilg3JtQSA"]
-else:
-    st.error("⚠️ GEMINI_API_KEY not found in Streamlit Secrets. Please configure it in your Streamlit Cloud app settings.")
-    st.stop()
+# Page Configuration
+st.set_page_config(
+    page_title="Smart Printers - Calendar Proofing QA",
     layout="wide",
     page_icon="📅",
 )
+
+# Secure API Key Retrieval from Streamlit Secrets
+if "GEMINI_API_KEY" in st.secrets:
+    API_KEY = st.secrets["AQ.Ab8RN6LTU7rk71oDl6nMy2roUP2etNEPysQOug4ifilg3JtQSA"]
+else:
+    st.error(
+        "⚠️ GEMINI_API_KEY not found in Streamlit Secrets. Please configure it in your Streamlit Cloud app settings."
+    )
+    st.stop()
 
 st.markdown(
     """
@@ -143,7 +149,6 @@ def create_styled_calendar_pdf(overall_passed, page_results, year, region):
 
 
 def run_calendar_inspection(client, prompt, page_img):
-    # Updated candidate models using active API endpoints
     candidate_models = [
         "gemini-3.6-flash",
         "gemini-2.5-flash",
@@ -236,7 +241,6 @@ if st.button("🚀 Execute Full Calendar Audit", type="primary"):
                 page_num = page_num_idx + 1
                 page = doc.load_page(page_num_idx)
                 
-                # Render at 150 DPI for optimal speed and vision clarity
                 pix = page.get_pixmap(dpi=150)
                 img = Image.open(io.BytesIO(pix.tobytes("png")))
                 high_res_img = prepare_high_res_image(img)
