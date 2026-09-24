@@ -12,12 +12,10 @@ import streamlit as st
 
 # Secure API Key Retrieval
 if "GEMINI_API_KEY" in st.secrets:
-    API_KEY = st.secrets["GEMINI_API_KEY"]
+    API_KEY = st.secrets["AQ.Ab8RN6LTU7rk71oDl6nMy2roUP2etNEPysQOug4ifilg3JtQSA"]
 else:
-    API_KEY = "YOUR_FALLBACK_KEY_HERE"
-
-st.set_page_config(
-    page_title="Smart Printers - Calendar Proofing QA",
+    st.error("⚠️ GEMINI_API_KEY not found in Streamlit Secrets. Please configure it in your Streamlit Cloud app settings.")
+    st.stop()
     layout="wide",
     page_icon="📅",
 )
@@ -145,10 +143,11 @@ def create_styled_calendar_pdf(overall_passed, page_results, year, region):
 
 
 def run_calendar_inspection(client, prompt, page_img):
+    # Updated candidate models using active API endpoints
     candidate_models = [
+        "gemini-3.6-flash",
         "gemini-2.5-flash",
-        "gemini-1.5-flash",
-        "gemini-2.0-flash",
+        "gemini-2.5-pro",
     ]
     last_exception = None
 
