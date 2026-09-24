@@ -16,7 +16,6 @@ st.set_page_config(
     layout="wide",
     page_icon="📅",
 )
-
 # Secure API Key Retrieval from Streamlit Secrets
 if "GEMINI_API_KEY" in st.secrets:
     API_KEY = st.secrets["AQ.Ab8RN6LTU7rk71oDl6nMy2roUP2etNEPysQOug4ifilg3JtQSA"]
@@ -25,7 +24,6 @@ else:
         "⚠️ GEMINI_API_KEY not found in Streamlit Secrets. Please configure it in your Streamlit Cloud app settings."
     )
     st.stop()
-
 st.markdown(
     """
 <style>
