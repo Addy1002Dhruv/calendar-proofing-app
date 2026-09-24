@@ -1,0 +1,6 @@
+streamlit
+pymupdf
+fpdf
+google-genai
+pillow
+holidays
