@@ -16,14 +16,16 @@ st.set_page_config(
     layout="wide",
     page_icon="📅",
 )
-# Secure API Key Retrieval from Streamlit Secrets
+
+# Fetch API key safely from Streamlit Secrets
 if "GEMINI_API_KEY" in st.secrets:
-    API_KEY = st.secrets["AQ.Ab8RN6LTU7rk71oDl6nMy2roUP2etNEPysQOug4ifilg3JtQSA"]
+    API_KEY = st.secrets["GEMINI_API_KEY"]
 else:
     st.error(
-        "⚠️ GEMINI_API_KEY not found in Streamlit Secrets. Please configure it in your Streamlit Cloud app settings."
+        "⚠️ GEMINI_API_KEY not found in Streamlit Secrets. Please add it to your Streamlit Cloud app settings."
     )
     st.stop()
+
 st.markdown(
     """
 <style>
@@ -148,9 +150,9 @@ def create_styled_calendar_pdf(overall_passed, page_results, year, region):
 
 def run_calendar_inspection(client, prompt, page_img):
     candidate_models = [
-        "gemini-3.6-flash",
         "gemini-2.5-flash",
         "gemini-2.5-pro",
+        "gemini-1.5-flash",
     ]
     last_exception = None
 
@@ -167,7 +169,7 @@ def run_calendar_inspection(client, prompt, page_img):
     raise last_exception if last_exception else Exception("API Call Failed")
 
 
-# Configuration Controls
+# Interface Controls
 col1, col2 = st.columns(2)
 with col1:
     target_year = st.selectbox(
@@ -191,7 +193,10 @@ with col2:
 st.subheader("1. Load Calendar Proof Document")
 upload_type = st.radio(
     "Choose Input Method:",
-    ("🔗 Google Drive Link (Best for Heavy 2GB PDFs)", "📁 Direct PDF File Upload (Up to 2GB)"),
+    (
+        "🔗 Google Drive Link (Best for Heavy 2GB PDFs)",
+        "📁 Direct PDF File Upload (Up to 2GB)",
+    ),
 )
 
 doc = None
@@ -205,11 +210,17 @@ if "Google Drive Link" in upload_type:
         with st.spinner("Fetching PDF from Google Drive..."):
             try:
                 output_file = "temp_calendar.pdf"
-                gdown.download(url=gdrive_url, output=output_file, quiet=False, fuzzy=True)
+                gdown.download(
+                    url=gdrive_url, output=output_file, quiet=False, fuzzy=True
+                )
                 doc = fitz.open(output_file)
-                st.success(f"Google Drive PDF Loaded Successfully! ({len(doc)} pages detected)")
+                st.success(
+                    f"Google Drive PDF Loaded Successfully! ({len(doc)} pages detected)"
+                )
             except Exception as e:
-                st.error(f"Could not load Google Drive file. Ensure link access is set to 'Anyone with the link'. Error: {str(e)}")
+                st.error(
+                    f"Could not load Google Drive file. Ensure link access is set to 'Anyone with the link'. Error: {str(e)}"
+                )
 
 else:
     pdf_file = st.file_uploader("Upload Calendar PDF (Up to 2GB)", type=["pdf"])
@@ -220,11 +231,13 @@ else:
         except Exception as pdf_err:
             st.error(f"Failed to read PDF file: {str(pdf_err)}")
 
-# Execution Block
+# Execution
 st.subheader("2. Run Automated Calendar Verification")
 if st.button("🚀 Execute Full Calendar Audit", type="primary"):
     if not doc:
-        st.error("Please upload a PDF file or provide a valid Google Drive link first.")
+        st.error(
+            "Please upload a PDF file or provide a valid Google Drive link first."
+        )
     else:
         try:
             client = genai.Client(api_key=API_KEY)
@@ -238,7 +251,7 @@ if st.button("🚀 Execute Full Calendar Audit", type="primary"):
             for page_num_idx in range(len(doc)):
                 page_num = page_num_idx + 1
                 page = doc.load_page(page_num_idx)
-                
+
                 pix = page.get_pixmap(dpi=150)
                 img = Image.open(io.BytesIO(pix.tobytes("png")))
                 high_res_img = prepare_high_res_image(img)
@@ -289,7 +302,7 @@ if st.button("🚀 Execute Full Calendar Audit", type="primary"):
                     f"🟢 OVERALL VERDICT: PASSED ({target_year} Calendar Approved)"
                 )
             else:
-                st.error(f"🔴 OVERALL VERDICT: REJECTED (Discrepancies found)")
+                st.error("🔴 OVERALL VERDICT: REJECTED (Discrepancies found)")
 
             for res in page_results:
                 with st.expander(
