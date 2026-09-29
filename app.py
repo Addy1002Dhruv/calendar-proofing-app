@@ -1,4 +1,5 @@
 import calendar
+import csv
 import datetime
 import io
 import re
@@ -17,12 +18,12 @@ st.set_page_config(
     page_icon="📅",
 )
 
-# Fetch API key safely from Streamlit Secrets
+# Secure API Key Retrieval from Streamlit Secrets
 if "GEMINI_API_KEY" in st.secrets:
     API_KEY = st.secrets["GEMINI_API_KEY"]
 else:
     st.error(
-        "⚠️ GEMINI_API_KEY not found in Streamlit Secrets. Please add it to your Streamlit Cloud app settings."
+        "⚠️ GEMINI_API_KEY not found in Streamlit Secrets. Please configure it in your Streamlit Cloud app settings."
     )
     st.stop()
 
@@ -112,13 +113,15 @@ class CalendarQA_PDF(FPDF):
 def create_styled_calendar_pdf(overall_passed, page_results, year, region):
     pdf = CalendarQA_PDF()
     pdf.add_page()
+
+    # Banner Verdict
     pdf.set_fill_color((34, 139, 34) if overall_passed else (220, 20, 60))
     pdf.set_text_color(255, 255, 255)
     pdf.set_font("Arial", "B", 13)
     pdf.cell(
         0,
         12,
-        f" OVERALL VERDICT: {'PASSED' if overall_passed else 'REJECTED'}",
+        f" OVERALL AUDIT VERDICT: {'PASSED' if overall_passed else 'REJECTED'}",
         0,
         1,
         "C",
@@ -126,13 +129,27 @@ def create_styled_calendar_pdf(overall_passed, page_results, year, region):
     )
     pdf.ln(4)
 
+    # Page Summary Header Table
+    pdf.set_font("Arial", "B", 10)
+    pdf.set_text_color(0, 0, 0)
+    pdf.cell(40, 7, "Page Number", 1, 0, "C")
+    pdf.cell(50, 7, "Pass / Fail Status", 1, 1, "C")
+
+    pdf.set_font("Arial", size=10)
+    for res in page_results:
+        pdf.cell(40, 6, f"Page {res['page_num']}", 1, 0, "C")
+        pdf.cell(50, 6, res["status"], 1, 1, "C")
+
+    pdf.ln(6)
+
+    # Detailed Audit Breakdown
     for res in page_results:
         pdf.set_font("Arial", "B", 11)
         pdf.set_text_color(10, 50, 100)
         pdf.cell(
             0,
             7,
-            f" Page {res['page_num']} Proofing Results: {res['status']}",
+            f" Detailed Audit — Page {res['page_num']} ({res['status']})",
             0,
             1,
             "L",
@@ -148,24 +165,52 @@ def create_styled_calendar_pdf(overall_passed, page_results, year, region):
     return pdf.output(dest="S").encode("latin-1")
 
 
+def create_summary_csv(page_results, target_year, holiday_region):
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(
+        ["Page Number", "Status", "Target Year", "Region", "Inspection Details"]
+    )
+    for res in page_results:
+        writer.writerow(
+            [
+                f"Page {res['page_num']}",
+                res["status"],
+                target_year,
+                holiday_region,
+                res["report_text"].replace("\n", " | "),
+            ]
+        )
+    return output.getvalue().encode("utf-8")
+
+
 def run_calendar_inspection(client, prompt, page_img):
-    # Updated to the latest active models requested by Google API
     candidate_models = [
-        "gemini-3.1-pro-preview",
-        "gemini-3.5-flash",
-        "gemini-3.6-flash",
+        "gemini-2.5-flash",
+        "gemini-2.5-pro",
     ]
     last_exception = None
 
     for model_name in candidate_models:
-        try:
-            response = client.models.generate_content(
-                model=model_name, contents=[prompt, page_img]
-            )
-            return response.text
-        except Exception as e:
-            last_exception = e
-            continue
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = client.models.generate_content(
+                    model=model_name, contents=[prompt, page_img]
+                )
+                return response.text
+            except Exception as e:
+                last_exception = e
+                err_str = str(e).upper()
+                if (
+                    "503" in err_str
+                    or "UNAVAILABLE" in err_str
+                    or "429" in err_str
+                ):
+                    time.sleep(3 * (attempt + 1))
+                    continue
+                else:
+                    break
 
     raise last_exception if last_exception else Exception("API Call Failed")
 
@@ -232,7 +277,7 @@ else:
         except Exception as pdf_err:
             st.error(f"Failed to read PDF file: {str(pdf_err)}")
 
-# Execution
+# Execution Block
 st.subheader("2. Run Automated Calendar Verification")
 if st.button("🚀 Execute Full Calendar Audit", type="primary"):
     if not doc:
@@ -298,6 +343,8 @@ if st.button("🚀 Execute Full Calendar Audit", type="primary"):
                 progress_bar.progress((page_num_idx + 1) / len(doc))
 
             st.markdown("---")
+
+            # Overall Verdict Banner
             if overall_passed:
                 st.success(
                     f"🟢 OVERALL VERDICT: PASSED ({target_year} Calendar Approved)"
@@ -305,20 +352,52 @@ if st.button("🚀 Execute Full Calendar Audit", type="primary"):
             else:
                 st.error("🔴 OVERALL VERDICT: REJECTED (Discrepancies found)")
 
+            # Pass / Fail Summary Table Display
+            st.subheader("📋 Page Pass/Fail Summary Table")
+            summary_table_data = [
+                {
+                    "Page": f"Page {res['page_num']}",
+                    "Status": "🟢 PASS" if res["status"] == "PASS" else "🔴 FAIL",
+                }
+                for res in page_results
+            ]
+            st.table(summary_table_data)
+
+            # Detailed Inspection Expanders
+            st.subheader("🔍 Detailed Inspection Reports")
             for res in page_results:
                 with st.expander(
                     f"Page {res['page_num']} Report — {res['status']}"
                 ):
                     st.write(res["report_text"])
 
-            pdf_bytes = create_styled_calendar_pdf(
-                overall_passed, page_results, target_year, holiday_region
-            )
-            st.download_button(
-                "📄 Download Audit Report PDF",
-                data=pdf_bytes,
-                file_name="Calendar_Audit_Report.pdf",
-                mime="application/pdf",
-            )
+            # Download Options Section
+            st.subheader("📥 Export Audit Reports")
+            d_col1, d_col2 = st.columns(2)
+
+            with d_col1:
+                pdf_bytes = create_styled_calendar_pdf(
+                    overall_passed, page_results, target_year, holiday_region
+                )
+                st.download_button(
+                    "📄 Download Full PDF Audit Report",
+                    data=pdf_bytes,
+                    file_name=f"Calendar_Audit_Report_{target_year}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                )
+
+            with d_col2:
+                csv_bytes = create_summary_csv(
+                    page_results, target_year, holiday_region
+                )
+                st.download_button(
+                    "📊 Download CSV Summary Report",
+                    data=csv_bytes,
+                    file_name=f"Calendar_Audit_Summary_{target_year}.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                )
+
         except Exception as global_err:
             st.error(f"Application Error: {str(global_err)}")
