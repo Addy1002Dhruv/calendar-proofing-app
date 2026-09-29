@@ -185,9 +185,11 @@ def create_summary_csv(page_results, target_year, holiday_region):
 
 
 def run_calendar_inspection(client, prompt, page_img):
+    # Fixed: Using the latest supported models
     candidate_models = [
-        "gemini-2.5-flash",
-        "gemini-2.5-pro",
+        "gemini-3.1-pro-preview",
+        "gemini-3.5-flash",
+        "gemini-3.6-flash",
     ]
     last_exception = None
 
@@ -202,6 +204,7 @@ def run_calendar_inspection(client, prompt, page_img):
             except Exception as e:
                 last_exception = e
                 err_str = str(e).upper()
+                # If server is busy (503) or rate limited (429), pause and retry
                 if (
                     "503" in err_str
                     or "UNAVAILABLE" in err_str
@@ -210,10 +213,9 @@ def run_calendar_inspection(client, prompt, page_img):
                     time.sleep(3 * (attempt + 1))
                     continue
                 else:
-                    break
+                    break # Break the retry loop and try the next model
 
     raise last_exception if last_exception else Exception("API Call Failed")
-
 
 # Interface Controls
 col1, col2 = st.columns(2)
