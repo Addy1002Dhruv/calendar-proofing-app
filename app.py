@@ -60,52 +60,38 @@ def get_holiday_reference(year, region):
         holiday_dict = {}
         if region in ["Kenya", "East Africa (Combined)"]:
             holiday_dict.update(
-                {
-                    str(d): f"{n} (Kenya)"
-                    for d, n in holidays.KE(years=year).items()
-                }
+                {str(d): f"{n} (Kenya)" for d, n in holidays.KE(years=year).items()}
             )
         if region in ["Uganda", "East Africa (Combined)"]:
             holiday_dict.update(
-                {
-                    str(d): f"{n} (Uganda)"
-                    for d, n in holidays.UG(years=year).items()
-                }
+                {str(d): f"{n} (Uganda)" for d, n in holidays.UG(years=year).items()}
             )
         if region in ["Tanzania", "East Africa (Combined)"]:
             holiday_dict.update(
-                {
-                    str(d): f"{n} (Tanzania)"
-                    for d, n in holidays.TZ(years=year).items()
-                }
+                {str(d): f"{n} (Tanzania)" for d, n in holidays.TZ(years=year).items()}
             )
-        return "\n".join(
-            [f"- {d}: {n}" for d, n in sorted(holiday_dict.items())]
-        )
+        return "\n".join([f"- {d}: {n}" for d, n in sorted(holiday_dict.items())])
     except ImportError:
         return f"Standard major holidays enabled for {region} ({year})."
 
 
-def prepare_high_res_image(image, max_dim=3200):
+def prepare_high_res_image(image, max_dim=2048):  # Reduced max_dim to save RAM
     img = image.copy()
     if max(img.size) > max_dim:
         img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
     if img.mode != "RGB":
         img = img.convert("RGB")
     buffer = io.BytesIO()
-    img.save(buffer, format="JPEG", quality=92)
+    img.save(buffer, format="JPEG", quality=85)
     buffer.seek(0)
     return Image.open(buffer)
 
 
 class CalendarQA_PDF(FPDF):
-
     def header(self):
         self.set_font("Arial", "B", 14)
         self.set_text_color(30, 60, 110)
-        self.cell(
-            0, 10, "SMART PRINTERS - CALENDAR PROOFING QA REPORT", 0, 1, "C"
-        )
+        self.cell(0, 10, "SMART PRINTERS - CALENDAR PROOFING QA REPORT", 0, 1, "C")
         self.line(10, 20, 200, 20)
         self.ln(6)
 
@@ -157,9 +143,7 @@ def create_styled_calendar_pdf(overall_passed, page_results, year, region):
         pdf.set_font("Arial", size=9)
         pdf.set_text_color(40, 40, 40)
         for line in res["report_text"].split("\n"):
-            pdf.multi_cell(
-                0, 5, line.encode("latin-1", "replace").decode("latin-1")
-            )
+            pdf.multi_cell(0, 5, line.encode("latin-1", "replace").decode("latin-1"))
         pdf.ln(3)
 
     return pdf.output(dest="S").encode("latin-1")
@@ -185,11 +169,11 @@ def create_summary_csv(page_results, target_year, holiday_region):
 
 
 def run_calendar_inspection(client, prompt, page_img):
-    # Fixed: Using the latest supported models
+    # Order changed: Try the fastest models first for performance
     candidate_models = [
-        "gemini-3.1-pro-preview",
-        "gemini-3.5-flash",
         "gemini-3.6-flash",
+        "gemini-3.5-flash",
+        "gemini-3.1-pro-preview",
     ]
     last_exception = None
 
@@ -204,18 +188,14 @@ def run_calendar_inspection(client, prompt, page_img):
             except Exception as e:
                 last_exception = e
                 err_str = str(e).upper()
-                # If server is busy (503) or rate limited (429), pause and retry
-                if (
-                    "503" in err_str
-                    or "UNAVAILABLE" in err_str
-                    or "429" in err_str
-                ):
+                if "503" in err_str or "UNAVAILABLE" in err_str or "429" in err_str:
                     time.sleep(3 * (attempt + 1))
                     continue
                 else:
-                    break # Break the retry loop and try the next model
+                    break
 
     raise last_exception if last_exception else Exception("API Call Failed")
+
 
 # Interface Controls
 col1, col2 = st.columns(2)
@@ -283,9 +263,7 @@ else:
 st.subheader("2. Run Automated Calendar Verification")
 if st.button("🚀 Execute Full Calendar Audit", type="primary"):
     if not doc:
-        st.error(
-            "Please upload a PDF file or provide a valid Google Drive link first."
-        )
+        st.error("Please upload a PDF file or provide a valid Google Drive link first.")
     else:
         try:
             client = genai.Client(api_key=API_KEY)
@@ -294,13 +272,24 @@ if st.button("🚀 Execute Full Calendar Audit", type="primary"):
 
             overall_passed = True
             page_results = []
+            
+            # ----------------------------------------------------
+            # NEW: LIVE PROGRESS & REAL-TIME RESULT STREAMING
+            # ----------------------------------------------------
+            status_text = st.empty()
             progress_bar = st.progress(0)
+            
+            st.subheader("🔍 Live Inspection Results")
+            live_results_container = st.container()
 
             for page_num_idx in range(len(doc)):
                 page_num = page_num_idx + 1
-                page = doc.load_page(page_num_idx)
+                
+                # Update live status bar
+                status_text.info(f"⏳ Currently Analyzing Page {page_num} of {len(doc)}... Please wait.")
 
-                pix = page.get_pixmap(dpi=150)
+                page = doc.load_page(page_num_idx)
+                pix = page.get_pixmap(dpi=120) # Lowered DPI slightly to save massive RAM amounts
                 img = Image.open(io.BytesIO(pix.tobytes("png")))
                 high_res_img = prepare_high_res_image(img)
 
@@ -315,47 +304,57 @@ if st.button("🚀 Execute Full Calendar Audit", type="primary"):
                 """
 
                 try:
-                    report_text = run_calendar_inspection(
-                        client, prompt, high_res_img
-                    )
+                    report_text = run_calendar_inspection(client, prompt, high_res_img)
                     page_passed = (
                         "PASS" in report_text.upper()
                         and "FAIL" not in report_text.upper()
                     )
                     if not page_passed:
                         overall_passed = False
-                    page_results.append(
-                        {
-                            "page_num": page_num,
-                            "status": "PASS" if page_passed else "FAIL",
-                            "report_text": report_text,
-                        }
-                    )
+                        
+                    res_dict = {
+                        "page_num": page_num,
+                        "status": "PASS" if page_passed else "FAIL",
+                        "report_text": report_text,
+                    }
+                    page_results.append(res_dict)
+
+                    # NEW: Write result to screen immediately!
+                    with live_results_container.expander(f"Page {page_num} Report — {res_dict['status']}", expanded=True):
+                        st.write(report_text)
+
                 except Exception as audit_err:
                     overall_passed = False
                     st.error(f"API Error on Page {page_num}: {str(audit_err)}")
-                    page_results.append(
-                        {
-                            "page_num": page_num,
-                            "status": "FAIL",
-                            "report_text": f"Error: {str(audit_err)}",
-                        }
-                    )
+                    page_results.append({
+                        "page_num": page_num,
+                        "status": "FAIL",
+                        "report_text": f"Error: {str(audit_err)}",
+                    })
 
                 progress_bar.progress((page_num_idx + 1) / len(doc))
+                
+                # NEW: Memory Cleanup to stop Streamlit from crashing silently!
+                del img
+                del high_res_img
+                del pix
+                del page
+
+            # End of loop - Clear status
+            status_text.success("✅ Document Analysis Complete!")
+            time.sleep(1)
+            status_text.empty()
 
             st.markdown("---")
 
             # Overall Verdict Banner
             if overall_passed:
-                st.success(
-                    f"🟢 OVERALL VERDICT: PASSED ({target_year} Calendar Approved)"
-                )
+                st.success(f"🟢 OVERALL VERDICT: PASSED ({target_year} Calendar Approved)")
             else:
                 st.error("🔴 OVERALL VERDICT: REJECTED (Discrepancies found)")
 
             # Pass / Fail Summary Table Display
-            st.subheader("📋 Page Pass/Fail Summary Table")
+            st.subheader("📋 Final Page Pass/Fail Summary Table")
             summary_table_data = [
                 {
                     "Page": f"Page {res['page_num']}",
@@ -364,14 +363,6 @@ if st.button("🚀 Execute Full Calendar Audit", type="primary"):
                 for res in page_results
             ]
             st.table(summary_table_data)
-
-            # Detailed Inspection Expanders
-            st.subheader("🔍 Detailed Inspection Reports")
-            for res in page_results:
-                with st.expander(
-                    f"Page {res['page_num']} Report — {res['status']}"
-                ):
-                    st.write(res["report_text"])
 
             # Download Options Section
             st.subheader("📥 Export Audit Reports")
