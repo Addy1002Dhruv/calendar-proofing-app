@@ -132,8 +132,12 @@ def create_styled_calendar_pdf(overall_passed, page_results, year, region):
     pdf = CalendarQA_PDF()
     pdf.add_page()
 
-    # Overall Banner Verdict
-    pdf.set_fill_color((34, 139, 34) if overall_passed else (220, 20, 60))
+    # Overall Banner Verdict - Fixed Color Assignment
+    if overall_passed:
+        pdf.set_fill_color(34, 139, 34)  # Green for Pass
+    else:
+        pdf.set_fill_color(220, 20, 60)  # Red for Fail
+        
     pdf.set_text_color(255, 255, 255)
     pdf.set_font("Arial", "B", 13)
     pdf.cell(
