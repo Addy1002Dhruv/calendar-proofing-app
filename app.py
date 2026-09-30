@@ -123,7 +123,7 @@ class CalendarQA_PDF(FPDF):
     def header(self):
         self.set_font("Arial", "B", 14)
         self.set_text_color(30, 60, 110)
-        self.cell(0, 10, "SMART PRINTERS - CALENDAR PROOFING QA REPORT", 0, 1, "C")
+        self.cell(0, 10, "SMART PRINTERS LTD - CALENDAR PROOFING QA REPORT", 0, 1, "C")
         self.line(10, 20, 200, 20)
         self.ln(6)
 
