@@ -27,6 +27,15 @@ else:
     )
     st.stop()
 
+# Initialize Session State for audit results to prevent UI state loss on download
+if "audit_completed" not in st.session_state:
+    st.session_state.audit_completed = False
+    st.session_state.page_results = []
+    st.session_state.overall_passed = True
+    st.session_state.pdf_bytes = None
+    st.session_state.csv_bytes = None
+    st.session_state.target_year = 2026
+
 st.markdown(
     """
 <style>
@@ -49,6 +58,29 @@ st.markdown(
 """,
     unsafe_allow_html=True,
 )
+
+
+def clean_text_for_pdf(text):
+    """Sanitizes text to ensure non-latin1 unicode characters do not crash FPDF."""
+    replacements = {
+        "•": "-",
+        "—": "-",
+        "–": "-",
+        "“": '"',
+        "”": '"',
+        "‘": "'",
+        "’": "'",
+        "🟢": "[PASS]",
+        "🔴": "[FAIL]",
+        "⚠️": "[WARN]",
+        "📅": "",
+        "🚀": "",
+        "**": "",
+        "*": "",
+    }
+    for k, v in replacements.items():
+        text = text.replace(k, v)
+    return text.encode("latin-1", "replace").decode("latin-1")
 
 
 def get_holiday_reference(year, region):
@@ -75,7 +107,7 @@ def get_holiday_reference(year, region):
         return f"Standard major holidays enabled for {region} ({year})."
 
 
-def prepare_high_res_image(image, max_dim=2048):  # Reduced max_dim to save RAM
+def prepare_high_res_image(image, max_dim=2048):
     img = image.copy()
     if max(img.size) > max_dim:
         img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
@@ -100,7 +132,7 @@ def create_styled_calendar_pdf(overall_passed, page_results, year, region):
     pdf = CalendarQA_PDF()
     pdf.add_page()
 
-    # Banner Verdict
+    # Overall Banner Verdict
     pdf.set_fill_color((34, 139, 34) if overall_passed else (220, 20, 60))
     pdf.set_text_color(255, 255, 255)
     pdf.set_font("Arial", "B", 13)
@@ -115,7 +147,7 @@ def create_styled_calendar_pdf(overall_passed, page_results, year, region):
     )
     pdf.ln(4)
 
-    # Page Summary Header Table
+    # Summary Table Header
     pdf.set_font("Arial", "B", 10)
     pdf.set_text_color(0, 0, 0)
     pdf.cell(40, 7, "Page Number", 1, 0, "C")
@@ -128,14 +160,14 @@ def create_styled_calendar_pdf(overall_passed, page_results, year, region):
 
     pdf.ln(6)
 
-    # Detailed Audit Breakdown
+    # Detailed Audit Findings
     for res in page_results:
         pdf.set_font("Arial", "B", 11)
         pdf.set_text_color(10, 50, 100)
         pdf.cell(
             0,
             7,
-            f" Detailed Audit — Page {res['page_num']} ({res['status']})",
+            f" Detailed Audit - Page {res['page_num']} ({res['status']})",
             0,
             1,
             "L",
@@ -143,10 +175,14 @@ def create_styled_calendar_pdf(overall_passed, page_results, year, region):
         pdf.set_font("Arial", size=9)
         pdf.set_text_color(40, 40, 40)
         for line in res["report_text"].split("\n"):
-            pdf.multi_cell(0, 5, line.encode("latin-1", "replace").decode("latin-1"))
+            cleaned_line = clean_text_for_pdf(line)
+            pdf.multi_cell(0, 5, cleaned_line)
         pdf.ln(3)
 
-    return pdf.output(dest="S").encode("latin-1")
+    pdf_output = pdf.output(dest="S")
+    if isinstance(pdf_output, str):
+        return pdf_output.encode("latin-1", "replace")
+    return bytes(pdf_output)
 
 
 def create_summary_csv(page_results, target_year, holiday_region):
@@ -169,7 +205,6 @@ def create_summary_csv(page_results, target_year, holiday_region):
 
 
 def run_calendar_inspection(client, prompt, page_img):
-    # Order changed: Try the fastest models first for performance
     candidate_models = [
         "gemini-3.6-flash",
         "gemini-3.5-flash",
@@ -272,24 +307,22 @@ if st.button("🚀 Execute Full Calendar Audit", type="primary"):
 
             overall_passed = True
             page_results = []
-            
-            # ----------------------------------------------------
-            # NEW: LIVE PROGRESS & REAL-TIME RESULT STREAMING
-            # ----------------------------------------------------
+
             status_text = st.empty()
             progress_bar = st.progress(0)
-            
+
             st.subheader("🔍 Live Inspection Results")
             live_results_container = st.container()
 
             for page_num_idx in range(len(doc)):
                 page_num = page_num_idx + 1
-                
-                # Update live status bar
-                status_text.info(f"⏳ Currently Analyzing Page {page_num} of {len(doc)}... Please wait.")
+
+                status_text.info(
+                    f"⏳ Currently Analyzing Page {page_num} of {len(doc)}... Please wait."
+                )
 
                 page = doc.load_page(page_num_idx)
-                pix = page.get_pixmap(dpi=120) # Lowered DPI slightly to save massive RAM amounts
+                pix = page.get_pixmap(dpi=120)
                 img = Image.open(io.BytesIO(pix.tobytes("png")))
                 high_res_img = prepare_high_res_image(img)
 
@@ -311,7 +344,7 @@ if st.button("🚀 Execute Full Calendar Audit", type="primary"):
                     )
                     if not page_passed:
                         overall_passed = False
-                        
+
                     res_dict = {
                         "page_num": page_num,
                         "status": "PASS" if page_passed else "FAIL",
@@ -319,8 +352,9 @@ if st.button("🚀 Execute Full Calendar Audit", type="primary"):
                     }
                     page_results.append(res_dict)
 
-                    # NEW: Write result to screen immediately!
-                    with live_results_container.expander(f"Page {page_num} Report — {res_dict['status']}", expanded=True):
+                    with live_results_container.expander(
+                        f"Page {page_num} Report — {res_dict['status']}", expanded=True
+                    ):
                         st.write(report_text)
 
                 except Exception as audit_err:
@@ -333,64 +367,77 @@ if st.button("🚀 Execute Full Calendar Audit", type="primary"):
                     })
 
                 progress_bar.progress((page_num_idx + 1) / len(doc))
-                
-                # NEW: Memory Cleanup to stop Streamlit from crashing silently!
+
                 del img
                 del high_res_img
                 del pix
                 del page
 
-            # End of loop - Clear status
             status_text.success("✅ Document Analysis Complete!")
             time.sleep(1)
             status_text.empty()
 
-            st.markdown("---")
+            # Build and store report bytes in Session State
+            pdf_bytes = create_styled_calendar_pdf(
+                overall_passed, page_results, target_year, holiday_region
+            )
+            csv_bytes = create_summary_csv(
+                page_results, target_year, holiday_region
+            )
 
-            # Overall Verdict Banner
-            if overall_passed:
-                st.success(f"🟢 OVERALL VERDICT: PASSED ({target_year} Calendar Approved)")
-            else:
-                st.error("🔴 OVERALL VERDICT: REJECTED (Discrepancies found)")
-
-            # Pass / Fail Summary Table Display
-            st.subheader("📋 Final Page Pass/Fail Summary Table")
-            summary_table_data = [
-                {
-                    "Page": f"Page {res['page_num']}",
-                    "Status": "🟢 PASS" if res["status"] == "PASS" else "🔴 FAIL",
-                }
-                for res in page_results
-            ]
-            st.table(summary_table_data)
-
-            # Download Options Section
-            st.subheader("📥 Export Audit Reports")
-            d_col1, d_col2 = st.columns(2)
-
-            with d_col1:
-                pdf_bytes = create_styled_calendar_pdf(
-                    overall_passed, page_results, target_year, holiday_region
-                )
-                st.download_button(
-                    "📄 Download Full PDF Audit Report",
-                    data=pdf_bytes,
-                    file_name=f"Calendar_Audit_Report_{target_year}.pdf",
-                    mime="application/pdf",
-                    use_container_width=True,
-                )
-
-            with d_col2:
-                csv_bytes = create_summary_csv(
-                    page_results, target_year, holiday_region
-                )
-                st.download_button(
-                    "📊 Download CSV Summary Report",
-                    data=csv_bytes,
-                    file_name=f"Calendar_Audit_Summary_{target_year}.csv",
-                    mime="text/csv",
-                    use_container_width=True,
-                )
+            st.session_state.page_results = page_results
+            st.session_state.overall_passed = overall_passed
+            st.session_state.pdf_bytes = pdf_bytes
+            st.session_state.csv_bytes = csv_bytes
+            st.session_state.target_year = target_year
+            st.session_state.audit_completed = True
 
         except Exception as global_err:
             st.error(f"Application Error: {str(global_err)}")
+
+# Persisted Results & Downloads Section (Runs independently of the button click)
+if st.session_state.audit_completed:
+    st.markdown("---")
+
+    # Overall Verdict Banner
+    if st.session_state.overall_passed:
+        st.success(
+            f"🟢 OVERALL VERDICT: PASSED ({st.session_state.target_year} Calendar Approved)"
+        )
+    else:
+        st.error("🔴 OVERALL VERDICT: REJECTED (Discrepancies found)")
+
+    # Pass / Fail Summary Table Display
+    st.subheader("📋 Final Page Pass/Fail Summary Table")
+    summary_table_data = [
+        {
+            "Page": f"Page {res['page_num']}",
+            "Status": "🟢 PASS" if res["status"] == "PASS" else "🔴 FAIL",
+        }
+        for res in st.session_state.page_results
+    ]
+    st.table(summary_table_data)
+
+    # Download Options Section
+    st.subheader("📥 Export Audit Reports")
+    d_col1, d_col2 = st.columns(2)
+
+    with d_col1:
+        st.download_button(
+            "📄 Download Full PDF Audit Report",
+            data=st.session_state.pdf_bytes,
+            file_name=f"Calendar_Audit_Report_{st.session_state.target_year}.pdf",
+            mime="application/pdf",
+            use_container_width=True,
+            key="download_pdf_btn",
+        )
+
+    with d_col2:
+        st.download_button(
+            "📊 Download CSV Summary Report",
+            data=st.session_state.csv_bytes,
+            file_name=f"Calendar_Audit_Summary_{st.session_state.target_year}.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key="download_csv_btn",
+        )
